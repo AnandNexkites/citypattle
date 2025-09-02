@@ -91,7 +91,7 @@ WSGI_APPLICATION = 'CityPattle.wsgi.application'
 #     }
 # }
 DATABASES = {
-    'default': dj_database_url.config(default=os.getenv('DATABASE_URL', 'postgresql://citypattle_user:PTn4G2khIe6rqoRXNKwPtyvZMxrOLs6G@dpg-d2r9atndiees73e21teg-a/citypattle'), conn_max_age=600),
+    'default': dj_database_url.config(default=os.getenv('DATABASE_URL', 'postgresql://citypattle_user:PTn4G2khIe6rqoRXNKwPtyvZMxrOLs6G@dpg-d2r9atndiees73e21teg-a.singapore-postgres.render.com/citypattle'), conn_max_age=600),
 }
 
 
