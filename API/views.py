@@ -148,11 +148,11 @@ class UserAuthAPIView(APIView):
     def post(self, request):
         username_or_phone = request.data.get('username')
         password = request.data.get('password')
-
+        print("📥 request.data:", request.data)
         if not username_or_phone or not password:
             return Response({
                 'status': False,
-                'message': 'Username/Phone and password required.',
+                'message': 'Username and password required.',
                 'data': None
             }, status=status.HTTP_400_BAD_REQUEST)
 
