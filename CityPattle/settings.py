@@ -27,9 +27,13 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-v5nmpth0hlv-2k*-wbe5u!3og-
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
 # ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*']
-ALLOWED_HOSTS = ['https://citypattle.onrender.com',"192.168.1.4", "127.0.0.1",
+ALLOWED_HOSTS = [
+    'https://citypattle.onrender.com',
+    "192.168.1.4",
+    "127.0.0.1",
     "localhost",
     "10.0.2.2",]
+    
 CORS_ALLOW_ALL_ORIGINS = True 
 
 # Application definition
