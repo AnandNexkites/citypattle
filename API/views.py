@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password,check_password
 from rest_framework.response import Response
 from rest_framework import status
-from .models import User, Venue
+from .models import User, Venue, Country
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import models
@@ -14,6 +14,50 @@ try:
     from twilio.rest import Client
 except Exception:  # Twilio may not be installed in some environments
     Client = None
+#Add country api
+@method_decorator(csrf_exempt, name='dispatch')
+class AddCountryAPIView(APIView):
+    def post(self, request):
+        name = request.data.get('name')
+        iso_code = request.data.get('iso_code')
+        phone_code = request.data.get('phone_code')
+        flag_url = request.data.get('flag_url')
+
+        if not all([name, iso_code, phone_code, flag_url]):
+            return Response({
+                'status': False,
+                'message': 'All fields are required.',
+                'data': None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            country = Country.objects.create(
+                name=name,
+                iso_code=iso_code,
+                phone_code=phone_code,
+                flag_url=flag_url
+            )
+
+            country_data = {
+                'id': country.id,
+                'name': country.name,
+                'iso_code': country.iso_code,
+                'phone_code': country.phone_code,
+                'flag_url': country.flag_url
+            }
+
+            return Response({
+                'status': True,
+                'message': 'Country added successfully.',
+                'data': country_data
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({
+                'status': False,
+                'message': f'Error: {str(e)}',
+                'data': None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 #creating user api
 @method_decorator(csrf_exempt, name='dispatch')
