@@ -26,7 +26,8 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-v5nmpth0hlv-2k*-wbe5u!3og-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*']
+# ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*']
+ALLOWED_HOSTS = ['https://citypattle.onrender.com']
 CORS_ALLOW_ALL_ORIGINS = True 
 
 # Application definition
@@ -124,10 +125,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
+# STATIC_ROOT = BASE_DIR / 'staticfiles'
+# STATICFILES_DIRS = [
+#     BASE_DIR / 'static',
+# ]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
