@@ -16,6 +16,8 @@ import os
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
@@ -26,13 +28,13 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-v5nmpth0hlv-2k*-wbe5u!3og-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-# ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*']
-ALLOWED_HOSTS = [
-    'citypattle.onrender.com',
-    "192.168.1.4",
-    "127.0.0.1",
-    "localhost",
-    "10.0.2.2",]
+ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*','192.168.1.7','10.76.105.36','192.168.1.15']
+# ALLOWED_HOSTS = [
+#     'citypattle.onrender.com',
+#     "192.168.1.4",
+#     "127.0.0.1",
+#     "localhost",
+#     "10.0.2.2",]
 
 CORS_ALLOW_ALL_ORIGINS = True 
 
@@ -84,15 +86,15 @@ WSGI_APPLICATION = 'CityPattle.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
-    'default': dj_database_url.config(default=os.getenv('DATABASE_URL', 'postgresql://citypattle_user:PTn4G2khIe6rqoRXNKwPtyvZMxrOLs6G@dpg-d2r9atndiees73e21teg-a.singapore-postgres.render.com/citypattle'), conn_max_age=600),
+    'default': {
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
+    }
 }
+# DATABASES = {
+#     'default': dj_database_url.config(default=os.getenv('DATABASE_URL', 'postgresql://citypattle_user:PTn4G2khIe6rqoRXNKwPtyvZMxrOLs6G@dpg-d2r9atndiees73e21teg-a.singapore-postgres.render.com/citypattle'), conn_max_age=600),
+# }
 
 
 # Password validation
@@ -119,7 +121,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Kolkata'
 
 USE_I18N = True
 
