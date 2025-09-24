@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password, check_password
 from rest_framework.response import Response
 from rest_framework import status
-from .models import FCMToken, Slot, User, Venue, Country, City,UserVerification
+from .models import FCMToken, Slot, User, Venue, Country, City,UserVerification, Booking
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import models
@@ -16,7 +16,17 @@ try:
 except Exception:
     Client = None
 from datetime import datetime, timedelta, time
+from firebase_admin import messaging
+try:
+    from CityPattle import firebase_config
+    print("Firebase config imported successfully")
+except Exception as e:
+    print("Import error:", e)
 
+from django.shortcuts import get_object_or_404
+import razorpay
+import threading
+from datetime import timedelta
 
 # ----------------------------
 # Add Country API
@@ -190,6 +200,7 @@ def save_fcm_token(user, token, device_type="android"):
 # ----------------------------
 # Login API (email OR phone)
 # ----------------------------
+
 class UserAuthAPIView(APIView):
     def post(self, request):
         identifier = request.data.get('username')
@@ -672,3 +683,382 @@ class GenerateSlotsAPIView(APIView):
             "message": f"Slots generated for {venue.name} on {slot_date}",
             "data": slots_list
         }, status=status.HTTP_200_OK)
+
+#----------------------------
+# test notification api
+#----------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class TestNotificationAPIView(APIView):
+    """
+    Send a test push notification to a device using FCM token.
+    POST request with JSON:
+    {
+        "token": "DEVICE_FCM_TOKEN",
+        "title": "Hello",
+        "body": "This is a test notification"
+    }
+    """
+
+    def post(self, request):
+        token = request.data.get("token")
+        title = request.data.get("title", "Test Notification")
+        body = request.data.get("body", "Hello from Django FCM!")
+
+        if not token:
+            return Response(
+                {"status": False, "message": "FCM token is required"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Build notification message
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body,
+            ),
+            token=token,
+            data={  # optional custom payload
+                "click_action": "FLUTTER_NOTIFICATION_CLICK",
+                "id": "1",
+                "status": "done"
+            }
+        )
+
+        try:
+            response = messaging.send(message)
+            return Response(
+                {"status": True, "message": "Notification sent", "response": response},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "message": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+#-----------------------------------------
+# Booking a slot API
+#-----------------------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class BookSlotsAPIView(APIView):
+    """
+    Book multiple slots for a venue with payment info.
+    POST request JSON:
+    {
+        "user_id": 1,
+        "venue_id": 1,
+        "date": "2025-09-18",
+        "slots": [
+            {"start_time": "10:00", "end_time": "11:00"},
+            {"start_time": "11:00", "end_time": "12:00"}
+        ],
+        "amount": 200.0,
+        "transaction_id": "TXN123456",
+        "razorpay_order_id": "order_ABC123",
+        "razorpay_payment_id": "pay_XYZ456",
+        "razorpay_signature": "signature_string"
+    }
+    """
+    def post(self, request):
+        data = request.data
+        user_id = data.get("user_id")
+        venue_id = data.get("venue_id")
+        date_str = data.get("date")
+        slots_data = data.get("slots", [])
+        amount = data.get("amount")
+        transaction_id = data.get("transaction_id")
+        razorpay_order_id = data.get("razorpay_order_id")
+        razorpay_payment_id = data.get("razorpay_payment_id")
+        razorpay_signature = data.get("razorpay_signature")
+
+        if not user_id or not venue_id or not date_str or not slots_data or not amount:
+            return Response({
+                "status": False,
+                "message": "Required fields missing",
+                "data": None
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(id=user_id)
+            venue = Venue.objects.get(id=venue_id)
+            slot_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except User.DoesNotExist:
+            return Response({"status": False, "message": "User not found", "data": None}, status=status.HTTP_404_NOT_FOUND)
+        except Venue.DoesNotExist:
+            return Response({"status": False, "message": "Venue not found", "data": None}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError:
+            return Response({"status": False, "message": "Invalid date format", "data": None}, status=status.HTTP_400_BAD_REQUEST)
+
+        booked_slots = []
+        for s in slots_data:
+            try:
+                start_time = datetime.strptime(s["start_time"], "%H:%M").time()
+                end_time = datetime.strptime(s["end_time"], "%H:%M").time()
+            except ValueError:
+                return Response({
+                    "status": False,
+                    "message": "Invalid time format in slots. Use HH:MM",
+                    "data": None
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Check if slot already exists
+            slot_obj, created = Slot.objects.get_or_create(
+                venue=venue,
+                date=slot_date,
+                start_time=start_time,
+                end_time=end_time,
+                defaults={"price": amount, "is_booked": True}
+            )
+
+            if not created and slot_obj.is_booked:
+                return Response({
+                    "status": False,
+                    "message": f"Slot {s['start_time']}-{s['end_time']} is already booked",
+                    "data": None
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # Mark as booked
+            slot_obj.is_booked = True
+            slot_obj.price = amount
+            slot_obj.save()
+
+            # Create booking entry
+            booking = Booking.objects.create(
+                user=user,
+                venue=venue,
+                slot=slot_obj,
+                amount=amount,
+                payment_status="paid",
+                transaction_id=transaction_id,
+                razorpay_order_id=razorpay_order_id,
+                razorpay_payment_id=razorpay_payment_id,
+                razorpay_signature=razorpay_signature
+            )
+
+            booked_slots.append({
+                "slot_id": slot_obj.id,
+                "start_time": slot_obj.start_time.strftime("%H:%M"),
+                "end_time": slot_obj.end_time.strftime("%H:%M"),
+                "booking_id": booking.id
+            })
+
+        return Response({
+            "status": True,
+            "message": f"{len(booked_slots)} slot(s) booked successfully",
+            "data": booked_slots
+        }, status=status.HTTP_200_OK)
+
+#-----------------------------------------
+# Booking a slot API and getting order id
+#-----------------------------------------
+
+razorpay_client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+@method_decorator(csrf_exempt, name='dispatch')
+class CreateBookingAPIView(APIView):
+    def post(self, request):
+        data = request.data
+        user_id = data.get("user_id")
+        venue_id = data.get("venue_id")
+        date = data.get("date")
+        slots_data = data.get("slots", [])
+        total_amount = data.get("amount")  # amount from Flutter request
+
+        # Validations
+        if not user_id:
+            return Response({"status": False, "message": "User ID required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not venue_id:
+            return Response({"status": False, "message": "Venue ID required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not date:
+            return Response({"status": False, "message": "Date required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not slots_data:
+            return Response({"status": False, "message": "Slots required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not total_amount:
+            return Response({"status": False, "message": "Amount required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = get_object_or_404(User, id=user_id)
+            venue = get_object_or_404(Venue, id=venue_id)
+
+            # -------------------------------
+            # Delete previous pending booking for this user and venue
+            # -------------------------------
+            previous_pending = Booking.objects.filter(
+                user=user, venue=venue, payment_status="pending"
+            )
+            for booking in previous_pending:
+                for slot in booking.slots.all():
+                    slot.is_booked = False  # release slot
+                    slot.save()
+                booking.delete()
+
+            # -------------------------------
+            # Create / mark slots
+            # -------------------------------
+            created_slots = []
+            for slot_info in slots_data:
+                start_time_obj = datetime.strptime(slot_info["start_time"], "%I:%M %p").time()
+                end_time_obj = datetime.strptime(slot_info["end_time"], "%I:%M %p").time()
+
+                existing_slot = Slot.objects.filter(
+                    venue=venue,
+                    date=date,
+                    start_time=start_time_obj,
+                    end_time=end_time_obj
+                ).first()
+
+                if existing_slot:
+                    if existing_slot.is_booked:
+                        return Response({
+                            "status": False,
+                            "message": f"Slot {slot_info['start_time']} - {slot_info['end_time']} is already booked."
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                    else:
+                        slot = existing_slot
+                        slot.is_booked = True
+                        slot.save()
+                else:
+                    slot = Slot.objects.create(
+                        venue=venue,
+                        date=date,
+                        start_time=start_time_obj,
+                        end_time=end_time_obj,
+                        price=getattr(venue, "price_per_slot", 100),
+                        is_booked=True
+                    )
+                created_slots.append(slot)
+
+            # -------------------------------
+            # Create Razorpay order
+            # -------------------------------
+            razorpay_order = razorpay_client.order.create({
+                "amount": int(float(total_amount) * 100),
+                "currency": "INR",
+                "payment_capture": 1
+            })
+
+            # -------------------------------
+            # Create new booking
+            # -------------------------------
+            booking = Booking.objects.create(
+                user=user,
+                venue=venue,
+                amount=total_amount,
+                razorpay_order_id=razorpay_order["id"],
+                payment_status="pending"
+            )
+            booking.slots.set(created_slots)
+
+            # -------------------------------
+            # Auto-delete after 10 minutes if payment is pending
+            # -------------------------------
+            def auto_delete_booking(booking_id):
+                try:
+                    booking_obj = Booking.objects.get(id=booking_id)
+                    if booking_obj.payment_status == "pending" and timezone.now() > booking_obj.created_at + timedelta(minutes=10):
+                        for slot in booking_obj.slots.all():
+                            slot.is_booked = False
+                            slot.save()
+                        booking_obj.delete()
+                        print(f"Booking {booking_id} deleted due to non-payment.")
+                except Booking.DoesNotExist:
+                    pass
+
+            threading.Timer(600, auto_delete_booking, args=[booking.id]).start()
+
+            # -------------------------------
+            # Return booking response
+            # -------------------------------
+            return Response({
+                "status": True,
+                "message": "Booking created. Complete payment to confirm.",
+                "data": {
+                    "booking_id": booking.id,
+                    "razorpay_order_id": razorpay_order["id"],
+                    "amount": total_amount,
+                    "currency": "INR",
+                    "slots": [
+                        {
+                            "id": s.id,
+                            "start_time": s.start_time.strftime("%H:%M"),
+                            "end_time": s.end_time.strftime("%H:%M"),
+                            "date": str(s.date),
+                            "price": str(s.price)
+                        } for s in created_slots
+                    ]
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+#----------------------------------------------------
+# varify the payment and set booking status to paid
+#---------------------------------------------------
+
+@method_decorator(csrf_exempt, name='dispatch')
+class UpdateBookingPaymentAPIView(APIView):
+    def post(self, request):
+        data = request.data
+        booking_id = data.get("booking_id")
+        razorpay_order_id = data.get("razorpay_order_id")
+        razorpay_payment_id = data.get("razorpay_payment_id")
+        razorpay_signature = data.get("razorpay_signature")
+
+        if not all([booking_id, razorpay_order_id, razorpay_payment_id, razorpay_signature]):
+            return Response(
+                {"status": False, "message": "All payment fields required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            booking = get_object_or_404(Booking, id=booking_id, razorpay_order_id=razorpay_order_id)
+
+            # ✅ Step 1: Verify signature
+            params_dict = {
+                'razorpay_order_id': razorpay_order_id,
+                'razorpay_payment_id': razorpay_payment_id,
+                'razorpay_signature': razorpay_signature
+            }
+            try:
+                razorpay_client.utility.verify_payment_signature(params_dict)
+            except Exception as e:
+                booking.payment_status = "failed"
+                booking.save()
+                return Response(
+                    {"status": False, "message": f"Signature verification failed: {str(e)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # ✅ Step 2: Fetch payment details from Razorpay
+            payment = razorpay_client.payment.fetch(razorpay_payment_id)
+
+            if payment["status"] == "captured":  # 👈 means money is successfully received
+                booking.razorpay_payment_id = razorpay_payment_id
+                booking.razorpay_signature = razorpay_signature
+                booking.transaction_id = razorpay_payment_id  # Treat this as transaction_id
+                booking.payment_status = "paid"
+                booking.save()
+
+                return Response({
+                    "status": True,
+                    "message": "Payment verified & booking confirmed.",
+                    "data": {
+                        "booking_id": booking.id,
+                        "transaction_id": booking.transaction_id,
+                        "payment_status": booking.payment_status
+                    }
+                }, status=status.HTTP_200_OK)
+
+            else:
+                # Payment not captured (could be authorized but not captured)
+                booking.payment_status = "failed"
+                booking.save()
+                return Response({
+                    "status": False,
+                    "message": f"Payment not successful. Current status: {payment['status']}"
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as e:
+            return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)

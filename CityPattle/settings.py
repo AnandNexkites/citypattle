@@ -19,6 +19,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+#Razorpay api keys
+RAZORPAY_KEY_ID = "rzp_test_RKW9KQcSe9l2Km"
+RAZORPAY_KEY_SECRET = "fSqTfxHjFgox0Py1bqFoWdZb"
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -28,7 +32,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-v5nmpth0hlv-2k*-wbe5u!3og-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*','192.168.1.7','10.76.105.36','192.168.1.15']
+ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*','192.168.1.7','10.76.105.36','192.168.1.12','10.76.105.36']
 # ALLOWED_HOSTS = [
 #     'citypattle.onrender.com',
 #     "192.168.1.4",

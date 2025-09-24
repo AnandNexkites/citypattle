@@ -1,5 +1,10 @@
 from django.urls import path
-from .views import GenerateSlotsAPIView, UserAuthAPIView, VenueAPIView, OTPAPIView,ResetPasswordAPIView,CreateUserAPIView,AddCountryAPIView,EmailOTPAPIView,SmsOTPAPIView,GoogleLoginAPIView
+from .views import (GenerateSlotsAPIView, UserAuthAPIView, 
+VenueAPIView, OTPAPIView, 
+ResetPasswordAPIView,CreateUserAPIView, 
+AddCountryAPIView,EmailOTPAPIView, 
+SmsOTPAPIView,GoogleLoginAPIView, 
+TestNotificationAPIView, CreateBookingAPIView, UpdateBookingPaymentAPIView)
 urlpatterns = [
     path('create-user/', CreateUserAPIView.as_view(), name='create-user'),
     path('auth/', UserAuthAPIView.as_view(), name='user-auth'),
@@ -11,4 +16,7 @@ urlpatterns = [
     path('add-country/', AddCountryAPIView.as_view(), name='add-country'),
     path('venues/generate-slots/', GenerateSlotsAPIView.as_view(), name='generate-slots'),
     path('google-user-create-login/', GoogleLoginAPIView.as_view(), name='creat-google-user-or-login'),
+    path('test-notification/', TestNotificationAPIView.as_view(), name='test-notification'),
+    path('create_booking/', CreateBookingAPIView.as_view(), name='create_booking'),
+    path('varify-payment/', UpdateBookingPaymentAPIView.as_view(), name='create_booking'),
 ]

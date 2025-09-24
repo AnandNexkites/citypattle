@@ -31,7 +31,13 @@ class SlotAdmin(admin.ModelAdmin):
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    list_display = [field.name for field in Booking._meta.fields]
+    list_display = [field.name for field in Booking._meta.fields] + ['display_slots']
+
+    def display_slots(self, obj):
+        # Shows start and end time of all slots in the booking
+        return ", ".join([f"{slot.start_time.strftime('%I:%M %p')} - {slot.end_time.strftime('%I:%M %p')}" 
+                          for slot in obj.slots.all()])
+    display_slots.short_description = "Slots"
 
 @admin.register(VenueImage)
 class VenueImageAdmin(admin.ModelAdmin):
