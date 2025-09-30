@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Country, State, City, User, Venue, Slot, Booking, VenueImage, FCMToken, UserVerification
+from .models import Country, SavedVenue, State, City, User, Venue, Slot, Booking, VenueImage, FCMToken, UserVerification
 
 @admin.register(Country)
 class CountryAdmin(admin.ModelAdmin):
@@ -24,6 +24,10 @@ class UserVerificationAdmin(admin.ModelAdmin):
 @admin.register(Venue)
 class VenueAdmin(admin.ModelAdmin):
     list_display = [field.name for field in Venue._meta.fields]
+
+@admin.register(SavedVenue)
+class VenueAdmin(admin.ModelAdmin):
+    list_display = [field.name for field in SavedVenue._meta.fields]
 
 @admin.register(Slot)
 class SlotAdmin(admin.ModelAdmin):

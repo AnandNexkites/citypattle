@@ -84,8 +84,19 @@ class Venue(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.city.name}, {self.city.state.name}, {self.city.country.name})"
+# ----------------------------
+# Saved Venue Table
+# ----------------------------
+class SavedVenue(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="saved_venues")
+    venue = models.ForeignKey(Venue, on_delete=models.CASCADE, related_name="saved_by_users")
+    created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        unique_together = ("user", "venue")  # prevent duplicates
 
+    def __str__(self):
+        return f"{self.user.full_name} saved {self.venue.name}"
 # ----------------------------
 # Venue Images Table
 # ----------------------------

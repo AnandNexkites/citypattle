@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.hashers import make_password, check_password
 from rest_framework.response import Response
 from rest_framework import status
-from .models import FCMToken, Slot, User, Venue, Country, City,UserVerification, Booking
+from .models import FCMToken, SavedVenue, Slot, User, Venue, Country, City,UserVerification, Booking
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.db import models
@@ -27,6 +27,44 @@ from django.shortcuts import get_object_or_404
 import razorpay
 import threading
 from datetime import timedelta
+
+
+#-----------------------------------------------------------------------------------------------------
+# Helper functions
+#----------------------------------------------------------------------------------------------------
+import requests
+def send_push_notification(user_id: int, title: str, body: str):
+    """
+    Sends a push notification to all active FCM tokens of a user.
+    """
+    print("--------push notification function called--------")
+    print(f"--------user id is {user_id} title is {title} and body is {body} --------")
+    # Fetch all active tokens for this user
+    tokens = FCMToken.objects.filter(user_id=user_id, is_active=True).values_list('token', flat=True)
+
+    if not tokens:
+        print("--------No tocken found--------")
+        return {"status": False, "message": "No active FCM tokens found for this user."}
+
+
+    results = []
+    for token in tokens:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title=title,
+                body=body
+            ),
+            token=token
+        )
+        try:
+            response = messaging.send(message)
+            results.append({"token": token, "status": True, "message": response})
+        except Exception as e:
+            results.append({"token": token, "status": False, "message": str(e)})
+    print("--------push notification send suceccfully--------")
+
+    return {"status": True, "results": results}
+#----------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 # ----------------------------
 # Add Country API
@@ -91,6 +129,8 @@ class CreateUserAPIView(APIView):
 
         email = request.data["email"]
         phone_number = request.data["phone_number"]
+        fcm_token = request.data.get("fcm_token")  # <-- Get FCM token from request
+        device_type = request.data.get("device_type", "android")  # optional, default to android
 
         # Uniqueness checks
         if User.objects.filter(email=email).exists():
@@ -130,6 +170,12 @@ class CreateUserAPIView(APIView):
                 is_email_verified=True,
                 is_phone_verified=True
             )
+
+            # -------------------------------
+            # Save FCM token for this user
+            # -------------------------------
+            if fcm_token:
+                save_fcm_token(user, fcm_token, device_type)
 
             return Response({
                 "status": True,
@@ -624,7 +670,7 @@ class GenerateSlotsAPIView(APIView):
         if not venue_id or not date_str:
             return Response(
                 {"status": False, "message": "Both 'venue_id' and 'date' are required"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=400
             )
 
         try:
@@ -632,7 +678,7 @@ class GenerateSlotsAPIView(APIView):
         except ValueError:
             return Response(
                 {"status": False, "message": "Invalid date format. Use YYYY-MM-DD."},
-                status=status.HTTP_400_BAD_REQUEST
+                status=400
             )
 
         try:
@@ -640,13 +686,13 @@ class GenerateSlotsAPIView(APIView):
         except Venue.DoesNotExist:
             return Response(
                 {"status": False, "message": "Venue not found"},
-                status=status.HTTP_404_NOT_FOUND
+                status=404
             )
 
         if not venue.opening_time or not venue.closing_time:
             return Response(
                 {"status": False, "message": "Venue opening or closing time not set"},
-                status=status.HTTP_400_BAD_REQUEST
+                status=400
             )
 
         # 🔹 Fetch all booked slots for that venue & date
@@ -662,12 +708,17 @@ class GenerateSlotsAPIView(APIView):
         slots_list = []
         current_time = datetime.combine(slot_date, venue.opening_time)
         closing_time = datetime.combine(slot_date, venue.closing_time)
+        now = datetime.now()  # current time to compare
 
         while current_time < closing_time:
             end_time = current_time + timedelta(hours=1)
 
             # Mark slot as booked if it exists in DB booked_set
             is_booked = (current_time.time(), end_time.time()) in booked_set
+
+            # ✅ If slot is not booked but end time has passed, mark it as booked
+            if not is_booked and end_time <= now:
+                is_booked = True
 
             slots_list.append({
                 "start_time": current_time.strftime("%I:%M %p"),
@@ -682,8 +733,7 @@ class GenerateSlotsAPIView(APIView):
             "status": True,
             "message": f"Slots generated for {venue.name} on {slot_date}",
             "data": slots_list
-        }, status=status.HTTP_200_OK)
-
+        }, status=200)
 #----------------------------
 # test notification api
 #----------------------------
@@ -863,9 +913,11 @@ class CreateBookingAPIView(APIView):
         venue_id = data.get("venue_id")
         date = data.get("date")
         slots_data = data.get("slots", [])
-        total_amount = data.get("amount")  # amount from Flutter request
+        total_amount = data.get("amount")
 
+        # ----------------
         # Validations
+        # ----------------
         if not user_id:
             return Response({"status": False, "message": "User ID required."}, status=status.HTTP_400_BAD_REQUEST)
         if not venue_id:
@@ -882,16 +934,18 @@ class CreateBookingAPIView(APIView):
             venue = get_object_or_404(Venue, id=venue_id)
 
             # -------------------------------
-            # Delete previous pending booking for this user and venue
+            # Check for pending bookings
             # -------------------------------
-            previous_pending = Booking.objects.filter(
+            pending_booking = Booking.objects.filter(
                 user=user, venue=venue, payment_status="pending"
-            )
-            for booking in previous_pending:
-                for slot in booking.slots.all():
-                    slot.is_booked = False  # release slot
+            ).first()
+
+            if pending_booking:
+                for slot in pending_booking.slots.all():
+                    slot.is_booked = False
                     slot.save()
-                booking.delete()
+                pending_booking.delete()
+                print(f"⚠️ Previous pending booking deleted for user {user_id}")
 
             # -------------------------------
             # Create / mark slots
@@ -914,19 +968,18 @@ class CreateBookingAPIView(APIView):
                             "status": False,
                             "message": f"Slot {slot_info['start_time']} - {slot_info['end_time']} is already booked."
                         }, status=status.HTTP_400_BAD_REQUEST)
-                    else:
-                        slot = existing_slot
-                        slot.is_booked = True
-                        slot.save()
+                    slot = existing_slot
+                    slot.is_booked = True
+                    slot.save()
                 else:
                     slot = Slot.objects.create(
-                        venue=venue,
-                        date=date,
-                        start_time=start_time_obj,
-                        end_time=end_time_obj,
-                        price=getattr(venue, "price_per_slot", 100),
-                        is_booked=True
-                    )
+                                        venue=venue,
+                                        date=date,
+                                        start_time=start_time_obj,
+                                        end_time=end_time_obj,
+                                        price=venue.price,  # <-- use the price from Venue model
+                                        is_booked=True
+                                    )
                 created_slots.append(slot)
 
             # -------------------------------
@@ -953,7 +1006,7 @@ class CreateBookingAPIView(APIView):
             # -------------------------------
             # Auto-delete after 10 minutes if payment is pending
             # -------------------------------
-            def auto_delete_booking(booking_id):
+            def auto_delete_booking(booking_id, user_id):
                 try:
                     booking_obj = Booking.objects.get(id=booking_id)
                     if booking_obj.payment_status == "pending" and timezone.now() > booking_obj.created_at + timedelta(minutes=10):
@@ -962,10 +1015,17 @@ class CreateBookingAPIView(APIView):
                             slot.save()
                         booking_obj.delete()
                         print(f"Booking {booking_id} deleted due to non-payment.")
+
+                        # 🔔 Send push notification to user
+                        send_push_notification(
+                            user_id=user_id,
+                            title="Booking Cancelled",
+                            body=f"Your booking (ID: {booking_id}) was cancelled due to non-payment."
+                        )
                 except Booking.DoesNotExist:
                     pass
 
-            threading.Timer(600, auto_delete_booking, args=[booking.id]).start()
+            threading.Timer(600, auto_delete_booking, args=[booking.id, user.id]).start()
 
             # -------------------------------
             # Return booking response
@@ -1034,12 +1094,19 @@ class UpdateBookingPaymentAPIView(APIView):
             # ✅ Step 2: Fetch payment details from Razorpay
             payment = razorpay_client.payment.fetch(razorpay_payment_id)
 
-            if payment["status"] == "captured":  # 👈 means money is successfully received
+            if payment["status"] == "captured":  # 👈 Payment successfully received
                 booking.razorpay_payment_id = razorpay_payment_id
                 booking.razorpay_signature = razorpay_signature
                 booking.transaction_id = razorpay_payment_id  # Treat this as transaction_id
                 booking.payment_status = "paid"
                 booking.save()
+
+                # 🔔 Send push notification to user
+                send_push_notification(
+                    user_id=booking.user.id,
+                    title="Booking Confirmed",
+                    body=f"Your booking (ID: {booking.id}) has been confirmed."
+                )
 
                 return Response({
                     "status": True,
@@ -1062,3 +1129,348 @@ class UpdateBookingPaymentAPIView(APIView):
 
         except Exception as e:
             return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+#----------------------------------------------------
+# send push notification
+#---------------------------------------------------
+
+# @method_decorator(csrf_exempt, name='dispatch')
+# class SendPushNotificationAPIView(APIView):
+#     def post(self, request):
+#         user_id = request.data.get("user_id")
+#         title = request.data.get("title")
+#         body = request.data.get("body")
+
+#         if not all([user_id, title, body]):
+#             return Response(
+#                 {"status": False, "message": "user_id, title, and body are required."},
+#                 status=status.HTTP_400_BAD_REQUEST
+#             )
+
+#         try:
+#             # Send notification
+#             result = send_push_notification(user_id, title, body)
+#             return Response(result, status=status.HTTP_200_OK if result.get("status") else status.HTTP_400_BAD_REQUEST)
+
+#         except Exception as e:
+#             return Response(
+#                 {"status": False, "message": str(e)},
+#                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+#             )
+
+
+#----------------------------------------------------
+# Save venue API
+#---------------------------------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class SaveVenueAPIView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        venue_id = request.data.get("venue_id")
+
+        if not user_id or not venue_id:
+            return Response({
+                "status": False,
+                "message": "user_id and venue_id are required."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user = get_object_or_404(User, id=user_id)
+        venue = get_object_or_404(Venue, id=venue_id)
+
+        # Check if already saved
+        if SavedVenue.objects.filter(user=user, venue=venue).exists():
+            return Response({
+                "status": False,
+                "message": "Venue already saved."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        saved_venue = SavedVenue.objects.create(user=user, venue=venue)
+
+        return Response({
+            "status": True,
+            "message": "Venue saved successfully.",
+            "data": {
+                "saved_venue_id": saved_venue.id,
+                "user_id": user.id,
+                "venue_id": venue.id,
+                "venue_name": venue.name,
+                "created_at": saved_venue.created_at.isoformat()
+            }
+        }, status=status.HTTP_201_CREATED)
+
+#----------------------------------------------------
+# Fetch saved venues
+#---------------------------------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class ListSavedVenuesAPIView(APIView):
+    def post(self, request):
+        # Get user_id from request body
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response({
+                "status": False,
+                "message": "user_id is required.",
+                "data": []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user = get_object_or_404(User, id=user_id)
+        saved_venues = SavedVenue.objects.filter(user=user).select_related(
+            "venue__city__state__country"
+        ).prefetch_related("venue__images")
+
+        data = []
+        for sv in saved_venues:
+            venue = sv.venue
+            country = venue.city.country if venue.city else None
+
+            data.append({
+                "id": venue.id,
+                "name": venue.name,
+                "address": venue.address,
+                "club": venue.club,
+                "contact": venue.contact,
+                "map_url": venue.map_url,
+                "opening_time": venue.opening_time.strftime("%I:%M %p") if venue.opening_time else None,
+                "closing_time": venue.closing_time.strftime("%I:%M %p") if venue.closing_time else None,
+                "price": float(venue.price) if venue.price else 0,
+                "ratings": venue.ratings,
+                "created_at": venue.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "city": venue.city.name if venue.city else None,
+                "state": venue.city.state.name if venue.city else None,
+                "country": country.name if country else None,
+                "iso_code": getattr(country, "iso_code", None),
+                "phone_code": getattr(country, "phone_code", None),
+                "images": [request.build_absolute_uri(img.image.url) for img in venue.images.all()]
+            })
+
+        return Response({
+            "status": True,
+            "message": f"{len(data)} venues saved by user.",
+            "data": data
+        }, status=status.HTTP_200_OK)
+
+#----------------------------------------------------
+#  Unsavesaved venues
+#---------------------------------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class UnsaveVenueAPIView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+        venue_id = request.data.get("venue_id")
+
+        if not user_id or not venue_id:
+            return Response({
+                "status": False,
+                "message": "user_id and venue_id are required."
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        user = get_object_or_404(User, id=user_id)
+        venue = get_object_or_404(Venue, id=venue_id)
+
+        # Check if venue is saved
+        saved_venue = SavedVenue.objects.filter(user=user, venue=venue).first()
+        if not saved_venue:
+            return Response({
+                "status": False,
+                "message": "Venue is not saved by this user."
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        saved_venue.delete()
+
+        return Response({
+            "status": True,
+            "message": "Venue unsaved successfully.",
+            "data": {
+                "user_id": user.id,
+                "venue_id": venue.id,
+                "venue_name": venue.name,
+            }
+        }, status=status.HTTP_200_OK)
+
+# ----------------------------
+# ACTIVE BOOKINGS API
+# ----------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class UserBookingsAPIView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+
+        if not user_id:
+            return Response(
+                {"status": False, "message": "User ID required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = get_object_or_404(User, id=user_id)
+            bookings = Booking.objects.filter(user=user).order_by("-created_at")
+
+            booking_list = []
+            now = datetime.now()
+
+            for booking in bookings:
+                # ✅ Keep only slots that are still valid (end time not passed yet)
+                valid_slots = []
+                for slot in booking.slots.all():
+                    slot_end = datetime.combine(slot.date, slot.end_time)
+                    if slot_end >= now:  # include future or ongoing slots
+                        valid_slots.append(slot)
+
+                # Skip this booking if no valid slots
+                if not valid_slots:
+                    continue
+
+                # Include booking (pending or confirmed) if at least one slot is valid
+                booking_list.append(self.serialize_booking(booking, valid_slots, user))
+
+            if not booking_list:
+                return Response(
+                    {"status": False, "message": "No active bookings"},
+                    status=status.HTTP_200_OK
+                )
+
+            return Response({
+                "status": True,
+                "message": "User bookings fetched successfully.",
+                "data": booking_list
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def serialize_booking(self, booking, slots, user):
+        return {
+            "booking_id": booking.id,
+            "venue": {
+                "id": booking.venue.id,
+                "name": booking.venue.name,
+                "contact":booking.venue.contact,
+                "club":booking.venue.club,
+                "address": booking.venue.address,
+                "price_per_slot": str(getattr(booking.venue, "price", 0))
+            },
+            "amount": str(booking.amount),
+            "payment_status": booking.payment_status,
+            "razorpay_order_id": booking.razorpay_order_id,
+            "transaction_id": booking.razorpay_payment_id,
+            "created_at": timezone.localtime(booking.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+            "slots": [
+                {
+                    "id": slot.id,
+                    "date": str(slot.date),
+                    "start_time": slot.start_time.strftime("%I:%M %p"),
+                    "end_time": slot.end_time.strftime("%I:%M %p"),
+                    "price": str(slot.price)
+                }
+                for slot in slots
+            ],
+            "qr_data": {
+                "booking_id": booking.id,
+                "user": user.full_name or user.email,
+                "venue": booking.venue.name,
+                "amount": str(booking.amount),
+                "payment_status": booking.payment_status,
+                "slots": [
+                    {
+                        "date": str(slot.date),
+                        "start_time": slot.start_time.strftime("%I:%M %p"),
+                        "end_time": slot.end_time.strftime("%I:%M %p"),
+                    }
+                    for slot in slots
+                ]
+            }
+        }
+
+
+# ----------------------------
+# BOOKING HISTORY API
+# ----------------------------
+@method_decorator(csrf_exempt, name='dispatch')
+class UserBookingHistoryAPIView(APIView):
+    def post(self, request):
+        user_id = request.data.get("user_id")
+
+        if not user_id:
+            return Response(
+                {"status": False, "message": "User ID required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = get_object_or_404(User, id=user_id)
+            bookings = Booking.objects.filter(user=user).order_by("-created_at")
+
+            booking_list = []
+            now = datetime.now()
+
+            for booking in bookings:
+                # ✅ Keep only slots that have fully ended
+                expired_slots = []
+                for slot in booking.slots.all():
+                    slot_end = datetime.combine(slot.date, slot.end_time)
+                    if slot_end < now:  # only past slots
+                        expired_slots.append(slot)
+
+                # Skip booking if not all slots have expired
+                if len(expired_slots) != booking.slots.count():
+                    continue
+
+                booking_list.append(self.serialize_booking(booking, expired_slots, user))
+
+            if not booking_list:
+                return Response(
+                    {"status": False, "message": "No past bookings"},
+                    status=status.HTTP_200_OK
+                )
+
+            return Response({
+                "status": True,
+                "message": "Booking history fetched successfully.",
+                "data": booking_list
+            }, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response({"status": False, "message": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def serialize_booking(self, booking, slots, user):
+        return {
+            "booking_id": booking.id,
+            "venue": {
+                "id": booking.venue.id,
+                "name": booking.venue.name,
+                "contact":booking.venue.contact,
+                "club":booking.venue.club,
+                "address": booking.venue.address,
+                "price_per_slot": str(getattr(booking.venue, "price", 0))
+            },
+            "amount": str(booking.amount),
+            "payment_status": booking.payment_status,
+            "razorpay_order_id": booking.razorpay_order_id,
+            "transaction_id": booking.razorpay_payment_id,
+            "created_at": timezone.localtime(booking.created_at).strftime("%Y-%m-%d %H:%M:%S"),
+            "slots": [
+                {
+                    "id": slot.id,
+                    "date": str(slot.date),
+                    "start_time": slot.start_time.strftime("%I:%M %p"),
+                    "end_time": slot.end_time.strftime("%I:%M %p"),
+                    "price": str(slot.price)
+                }
+                for slot in slots
+            ],
+            "qr_data": {
+                "booking_id": booking.id,
+                "user": user.full_name or user.email,
+                "venue": booking.venue.name,
+                "amount": str(booking.amount),
+                "payment_status": booking.payment_status,
+                "slots": [
+                    {
+                        "date": str(slot.date),
+                        "start_time": slot.start_time.strftime("%I:%M %p"),
+                        "end_time": slot.end_time.strftime("%I:%M %p"),
+                    }
+                    for slot in slots
+                ]
+            }
+        }

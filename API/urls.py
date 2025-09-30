@@ -1,10 +1,11 @@
 from django.urls import path
-from .views import (GenerateSlotsAPIView, UserAuthAPIView, 
+from .views import (GenerateSlotsAPIView, ListSavedVenuesAPIView, SaveVenueAPIView, UnsaveVenueAPIView, UserAuthAPIView, UserBookingHistoryAPIView, UserBookingsAPIView, 
 VenueAPIView, OTPAPIView, 
 ResetPasswordAPIView,CreateUserAPIView, 
 AddCountryAPIView,EmailOTPAPIView, 
 SmsOTPAPIView,GoogleLoginAPIView, 
-TestNotificationAPIView, CreateBookingAPIView, UpdateBookingPaymentAPIView)
+# TestNotificationAPIView, 
+CreateBookingAPIView, UpdateBookingPaymentAPIView)
 urlpatterns = [
     path('create-user/', CreateUserAPIView.as_view(), name='create-user'),
     path('auth/', UserAuthAPIView.as_view(), name='user-auth'),
@@ -16,7 +17,13 @@ urlpatterns = [
     path('add-country/', AddCountryAPIView.as_view(), name='add-country'),
     path('venues/generate-slots/', GenerateSlotsAPIView.as_view(), name='generate-slots'),
     path('google-user-create-login/', GoogleLoginAPIView.as_view(), name='creat-google-user-or-login'),
-    path('test-notification/', TestNotificationAPIView.as_view(), name='test-notification'),
+    # path('test-notification/', TestNotificationAPIView.as_view(), name='test-notification'),
     path('create_booking/', CreateBookingAPIView.as_view(), name='create_booking'),
     path('varify-payment/', UpdateBookingPaymentAPIView.as_view(), name='create_booking'),
+    # path('test-notification/', SendPushNotificationAPIView.as_view(), name='test-notification'),
+    path('save-venue/', SaveVenueAPIView.as_view(), name='save-venue'),
+    path('saved-venue-list/', ListSavedVenuesAPIView.as_view(), name='saved-venue-list'),
+    path('unsave-venue/', UnsaveVenueAPIView.as_view(), name='sunsave-venue'),
+    path('user-bookings/', UserBookingsAPIView.as_view(), name='user-bookings'),
+    path('user-bookings-history/', UserBookingHistoryAPIView.as_view(), name='user-bookings-history'),
 ]

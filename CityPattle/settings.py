@@ -32,7 +32,7 @@ SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-v5nmpth0hlv-2k*-wbe5u!3og-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = ['192.168.1.10', 'localhost', '127.0.0.1','*','192.168.1.7','10.76.105.36','192.168.1.12','10.76.105.36']
+ALLOWED_HOSTS = ['192.168.1.18', 'localhost', '127.0.0.1','*','192.168.1.7','10.76.105.36','192.168.1.12','10.76.105.36']
 # ALLOWED_HOSTS = [
 #     'citypattle.onrender.com',
 #     "192.168.1.4",
